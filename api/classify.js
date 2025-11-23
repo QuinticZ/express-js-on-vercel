@@ -45,7 +45,7 @@ export default async function handler(req, res) {
           {
             role: "system",
             content:
-              "You are an automotive visual recognition expert. Be precise. If uncertain, set unknown fields to null and lower confidence.",
+              "You are an automotive visual recognition expert. Be precise. Double check the environment. If uncertain, set unknown fields to null and lower confidence.",
           },
           {
             role: "user",
