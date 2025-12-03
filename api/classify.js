@@ -14,23 +14,38 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "No image provided (imageBase64 required)" });
     }
 
-    // ask the model to return STRICT JSON describing the car
+    // NEW JSON SPEC WITH ANTI-CHEAT FIELDS
+    const jsonSpec = {
+      make: "string",
+      model: "string",
+      generation: "string|null",
+      year_range: "string e.g. '1999-2002' or null",
+      body_style: "string|null",
+      engine: "string|null",
+      horsepower: "number|null",
+      torque_nm: "number|null",
+      drivetrain: "string|null",
+      country: "string|null",
+      wiki_url: "string|null",
+      confidence: "0..1 number",
+
+      // anti-cheat
+      is_screen_photo:
+        "boolean (true if this looks like a photo of a screen, TV, monitor, laptop, phone, or printed photo)",
+      real_world_confidence:
+        "0..1 number (your confidence that this is a real physical car in the environment, not a screen/screenshot)",
+      frame_suspicion:
+        "0..1 number (your suspicion that the user is trying to cheat by photographing a screen or non-real car)",
+      environment:
+        "short string|null (e.g. 'outdoor street at night', 'indoor parking garage', 'computer screen on desk')",
+      notes:
+        "short string explaining why you decided on screen or real car; mention clues like bezels, UI, reflections, moiré, etc.",
+    };
+
     const userText =
-      "Identify the car in this photo. Return STRICT JSON ONLY with fields: " +
-      JSON.stringify({
-        make: "string",
-        model: "string",
-        generation: "string|null",
-        year_range: "string e.g. '1999-2002' or null",
-        body_style: "string|null",
-        engine: "string|null",
-        horsepower: "number|null",
-        torque_nm: "number|null",
-        drivetrain: "string|null",
-        country: "string|null",
-        wiki_url: "string|null",
-        confidence: "0..1 number",
-      });
+      "Identify the car in this photo AND detect cheating. " +
+      "Return STRICT JSON ONLY with fields: " +
+      JSON.stringify(jsonSpec);
 
     const openaiResp = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -39,51 +54,12 @@ export default async function handler(req, res) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "gpt-5-mini",
+        model: "gpt-5-mini", // your existing model
         response_format: { type: "json_object" }, // force valid JSON
         messages: [
           {
             role: "system",
             content:
-              "You are an automotive visual recognition expert. Be precise. Double check the environment. If uncertain, set unknown fields to null and lower confidence.",
-          },
-          {
-            role: "user",
-            // multimodal: text + the image the app sent
-            content: [
-              { type: "text", text: userText },
-              { type: "image_url", image_url: { url: imageBase64 } },
-            ],
-          },
-        ],
-      }),
-    });
-
-    if (!openaiResp.ok) {
-      const errText = await openaiResp.text();
-      return res.status(502).json({ error: "Upstream error", detail: errText });
-    }
-
-    const ai = await openaiResp.json();
-    const raw = ai?.choices?.[0]?.message?.content || "{}";
-
-    let car;
-    try {
-      car = JSON.parse(raw);
-    } catch {
-      // if the model slipped some text, try to salvage JSON with a basic fallback
-      const start = raw.indexOf("{");
-      const end = raw.lastIndexOf("}");
-      car = start >= 0 && end > start ? JSON.parse(raw.slice(start, end + 1)) : null;
-    }
-
-    if (!car) {
-      return res.status(500).json({ error: "Could not parse AI JSON", raw });
-    }
-
-    return res.status(200).json({ success: true, car });
-  } catch (error) {
-    console.error(error);
-    return res.status(500).json({ error: "Internal server error" });
-  }
-}
+              "You are an automotive visual recognition expert AND anti-cheat system. " +
+              "Be precise about make/model, but ALSO determine if this is a real physical car or an image on a screen. " +
+              "If you see monitor bezels, UI elements, pixels, moiré patterns, reflections of a room on glass, or anything
