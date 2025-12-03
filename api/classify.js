@@ -9,14 +9,15 @@ export default async function handler(req, res) {
     if (!apiKey) {
       return res
         .status(500)
-        .json({ error: "Missing OPENAI_API_KEY environment variable" });
+        .json({ success: false, error: "Missing OPENAI_API_KEY environment variable" });
     }
 
     const { imageBase64 } = req.body || {};
     if (!imageBase64) {
-      return res
-        .status(400)
-        .json({ error: "No image provided (imageBase64 required)" });
+      return res.status(400).json({
+        success: false,
+        error: "No image provided (imageBase64 required)",
+      });
     }
 
     // JSON SPEC INCLUDING ANTI-CHEAT FIELDS
@@ -128,8 +129,10 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: true, car });
   } catch (error) {
     console.error("Handler crash:", error);
-    return res
-      .status(500)
-      .json({ success: false, error: "Internal server error", detail: String(error) });
+    return res.status(500).json({
+      success: false,
+      error: "Internal server error",
+      detail: String(error),
+    });
   }
 }
