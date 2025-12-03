@@ -1,19 +1,135 @@
 // api/classify.js
 export default async function handler(req, res) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+
   try {
-    // Just echo back what we got, to prove the function runs
-    return res.status(200).json({
-      success: true,
-      message: "Minimal classify echo",
-      method: req.method,
-      body: req.body || null,
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      return res
+        .status(500)
+        .json({ error: "Missing OPENAI_API_KEY environment variable" });
+    }
+
+    const { imageBase64 } = req.body || {};
+    if (!imageBase64) {
+      return res
+        .status(400)
+        .json({ error: "No image provided (imageBase64 required)" });
+    }
+
+    // JSON SPEC INCLUDING ANTI-CHEAT FIELDS
+    const jsonSpec = {
+      make: "string",
+      model: "string",
+      generation: "string|null",
+      year_range: "string e.g. '1999-2002' or null",
+      body_style: "string|null",
+      engine: "string|null",
+      horsepower: "number|null",
+      torque_nm: "number|null",
+      drivetrain: "string|null",
+      country: "string|null",
+      wiki_url: "string|null",
+      confidence: "0..1 number",
+
+      // anti-cheat
+      is_screen_photo:
+        "boolean (true if this looks like a photo of a screen, TV, monitor, laptop, phone, or printed photo)",
+      real_world_confidence:
+        "0..1 number (your confidence that this is a real physical car in the environment, not a screen/screenshot)",
+      frame_suspicion:
+        "0..1 number (your suspicion that the user is trying to cheat by photographing a screen or non-real car)",
+      environment:
+        "short string|null (e.g. 'outdoor street at night', 'indoor parking garage', 'computer screen on desk')",
+      notes:
+        "short string explaining why you decided on screen or real car; mention clues like bezels, UI, reflections, moiré, etc.",
+    };
+
+    const userText =
+      "Identify the car in this photo AND detect cheating. " +
+      "Return STRICT JSON ONLY with fields: " +
+      JSON.stringify(jsonSpec);
+
+    const openaiResp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-5-mini", // same model you used before
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are an automotive visual recognition expert AND anti-cheat system. " +
+              "Be precise about make/model, but ALSO determine if this is a real physical car or an image on a screen. " +
+              "If you see monitor bezels, UI elements, pixels, moiré patterns, reflections of a room on glass, or anything suggesting a TV/computer/phone, " +
+              "set is_screen_photo = true and increase frame_suspicion. " +
+              "If you are unsure, lower real_world_confidence and explain in notes. " +
+              "Never add text outside the JSON.",
+          },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: userText },
+              { type: "image_url", image_url: { url: imageBase64 } },
+            ],
+          },
+        ],
+      }),
     });
-  } catch (err) {
-    console.error("Handler error:", err);
-    return res.status(500).json({
-      success: false,
-      error: "Handler crashed",
-      detail: String(err),
-    });
+
+    if (!openaiResp.ok) {
+      const errText = await openaiResp.text();
+      console.error("OpenAI upstream error:", openaiResp.status, errText);
+      return res.status(502).json({
+        success: false,
+        error: "Upstream OpenAI error",
+        status: openaiResp.status,
+        detail: errText.slice(0, 500),
+      });
+    }
+
+    const ai = await openaiResp.json();
+    const raw = ai?.choices?.[0]?.message?.content || "{}";
+
+    let car;
+    try {
+      car = JSON.parse(raw);
+    } catch (parseErr) {
+      // try to salvage JSON if model slipped extra text
+      const start = raw.indexOf("{");
+      const end = raw.lastIndexOf("}");
+      if (start >= 0 && end > start) {
+        try {
+          car = JSON.parse(raw.slice(start, end + 1));
+        } catch (innerErr) {
+          console.error("Failed to salvage JSON:", innerErr, raw);
+          return res.status(500).json({
+            success: false,
+            error: "Could not parse AI JSON after salvage",
+            raw,
+          });
+        }
+      } else {
+        console.error("Raw content has no JSON object:", raw);
+        return res.status(500).json({
+          success: false,
+          error: "Could not parse AI JSON",
+          raw,
+        });
+      }
+    }
+
+    return res.status(200).json({ success: true, car });
+  } catch (error) {
+    console.error("Handler crash:", error);
+    return res
+      .status(500)
+      .json({ success: false, error: "Internal server error", detail: String(error) });
   }
 }
