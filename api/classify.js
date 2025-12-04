@@ -1,4 +1,45 @@
 // api/classify.js
+
+// --- Helpers ---------------------------------------------------------
+
+/**
+ * Normalize any "number-like" value into a real JS number or null.
+ * Handles:
+ *  - 3.2
+ *  - "3.2"
+ *  - "3,2"
+ *  - "3.2 s"
+ *  - "320 km/h"
+ */
+function normalizeNumber(value) {
+  if (value === null || value === undefined) return null;
+
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  if (typeof value === "string") {
+    const cleaned = value
+      .replace(",", ".") // european decimal → dot
+      .replace(/[^0-9.\-]/g, ""); // strip units / junk
+
+    const num = parseFloat(cleaned);
+    return Number.isFinite(num) ? num : null;
+  }
+
+  return null;
+}
+
+function clamp01(n) {
+  const v = normalizeNumber(n);
+  if (v === null) return null;
+  if (v < 0) return 0;
+  if (v > 1) return 1;
+  return v;
+}
+
+// --- Main handler ----------------------------------------------------
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ success: false, error: "Method not allowed" });
@@ -38,6 +79,8 @@ export default async function handler(req, res) {
       model: "string",
       generation: "string|null",
       year_range: "string e.g. '1999-2002' or null",
+      year_start: "number|null (4-digit year if known)",
+      year_end: "number|null (4-digit year if known)",
       body_style: "string|null",
       engine: "string|null",
       horsepower: "number|null",
@@ -153,6 +196,38 @@ export default async function handler(req, res) {
         });
       }
     }
+
+    // ---------- NORMALIZE NUMERIC FIELDS ----------
+
+    // Tech specs
+    car.horsepower = normalizeNumber(car.horsepower);
+    car.torque_nm = normalizeNumber(car.torque_nm);
+    car.top_speed_kmh = normalizeNumber(car.top_speed_kmh);
+    car.weight_kg = normalizeNumber(car.weight_kg);
+    car.zero_to_hundred = normalizeNumber(car.zero_to_hundred);
+
+    // Years
+    car.year_start = normalizeNumber(car.year_start);
+    car.year_end = normalizeNumber(car.year_end);
+
+    if (!car.year_start || !car.year_end) {
+      // Try to parse from year_range like "1999–2002"
+      if (typeof car.year_range === "string") {
+        const m = car.year_range.match(/(\d{4})\D+(\d{4})/);
+        if (m) {
+          const ys = parseInt(m[1], 10);
+          const ye = parseInt(m[2], 10);
+          if (Number.isFinite(ys)) car.year_start = ys;
+          if (Number.isFinite(ye)) car.year_end = ye;
+        }
+      }
+    }
+
+    // Confidence + rarity score
+    car.confidence = clamp01(car.confidence);
+    car.rarity_score = clamp01(car.rarity_score);
+
+    // ---------- DONE ----------
 
     return res.status(200).json({ success: true, car });
   } catch (error) {
